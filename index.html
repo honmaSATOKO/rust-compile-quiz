@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>コンパイル通る？ Rust編</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Zen+Kaku+Gothic+New:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+/* 方針: 紙のように明るいUI × 常に暗いターミナル風コード。判定はコンパイラの出力そのものを見せる */
+:root {
+  --bg: #eceff4;
+  --surface: #ffffff;
+  --ink: #18202b;
+  --muted: #5a6575;
+  --line: #d4dae3;
+  --accent: #2945c7;
+  --accent-ink: #ffffff;
+  --ok: #0d7a58;
+  --err: #c1352b;
+  --code-bg: #1b2130;
+  --code-ink: #dfe5ee;
+  --font-ui: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141b; --surface: #19202a; --ink: #e5e9ef; --muted: #96a1b2; --line: #2a3340;
+    --accent: #7e99ff; --accent-ink: #0d1220; --ok: #41cf9c; --err: #ff7b6f;
+    --code-bg: #0a0d12; --code-ink: #dfe5ee; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10141b; --surface: #19202a; --ink: #e5e9ef; --muted: #96a1b2; --line: #2a3340;
+  --accent: #7e99ff; --accent-ink: #0d1220; --ok: #41cf9c; --err: #ff7b6f;
+  --code-bg: #0a0d12; --code-ink: #dfe5ee; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  line-height: 1.7;
+  -webkit-text-size-adjust: 100%;
+}
+.wrap { max-width: 680px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 20px; }
+h1, h2, h3 { text-wrap: balance; margin: 0; line-height: 1.3; }
+h1 { font-size: 30px; font-weight: 900; letter-spacing: 0.01em; }
+h1 .q { color: var(--accent); }
+h2 { font-size: 20px; font-weight: 700; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.small { font-size: 14px; }
+
+button {
+  font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); padding: 12px 16px; font-weight: 700;
+}
+button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button:disabled { cursor: default; }
+
+/* ホーム */
+.hero { display: grid; gap: 8px; }
+.stages { display: grid; gap: 12px; }
+.stage {
+  text-align: left; display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: center;
+  padding: 14px 16px; font-weight: 400;
+}
+.stage .day {
+  font-family: var(--font-code); font-weight: 700; font-size: 13px; color: var(--accent);
+  border: 1.5px solid var(--accent); border-radius: 8px; padding: 4px 8px; white-space: nowrap;
+}
+.stage .t { font-weight: 700; display: block; }
+.stage .best { font-family: var(--font-code); font-size: 13px; color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rules { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; font-size: 14px; }
+
+/* プレイ画面 */
+.hud { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.hud .left { display: flex; gap: 10px; align-items: center; }
+.hud .lives { font-size: 20px; letter-spacing: 2px; color: var(--err); }
+.hud .lives .gone { color: var(--line); }
+.hud .score { font-family: var(--font-code); font-weight: 700; font-variant-numeric: tabular-nums; }
+.back { padding: 6px 10px; font-size: 14px; font-weight: 400; }
+.progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); transition: width .3s; }
+.chapter { font-size: 13px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.chapter .tag { font-family: var(--font-code); color: var(--accent); font-weight: 700; }
+.prompt { font-size: 18px; font-weight: 700; }
+
+pre.code, pre.term {
+  margin: 0; overflow-x: auto; border-radius: 12px; padding: 14px 16px;
+  font-family: var(--font-code); font-size: 13.5px; line-height: 1.65;
+  background: var(--code-bg); color: var(--code-ink);
+}
+pre.code .kw { color: #f0a35e; }
+pre.code .ty { color: #7fc8f8; }
+pre.code .st { color: #a8d982; }
+pre.code .nu { color: #e6b673; }
+pre.code .ma { color: #d7a2f5; }
+pre.code .cm { color: #7a8597; font-style: italic; }
+pre.term { border-left: 4px solid var(--err); white-space: pre-wrap; word-break: break-word; }
+pre.term.run { border-left-color: var(--ok); }
+pre.term .lab { color: #7a8597; display: block; margin-bottom: 4px; }
+pre.term .e { color: #ff8a80; font-weight: 700; }
+
+.answers { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
+.answers.choices { grid-template-columns: 1fr; }
+.answers button { padding: 14px 12px; text-align: center; }
+.answers.choices button { text-align: left; font-family: var(--font-code); font-weight: 400; font-size: 14.5px; white-space: pre-wrap; }
+.answers button.right { border: 2px solid var(--ok); color: var(--ok); }
+.answers button.wrong { border: 2px solid var(--err); color: var(--err); }
+.answers button.dim { opacity: .45; }
+
+.feedback { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; display: grid; gap: 12px; }
+.verdict { font-size: 20px; font-weight: 900; }
+.verdict.ok { color: var(--ok); }
+.verdict.ng { color: var(--err); }
+.fixlab { font-size: 13px; font-weight: 700; color: var(--muted); }
+.ref { font-size: 13px; color: var(--muted); }
+
+/* 結果 */
+.result { display: grid; gap: 14px; }
+.bigscore { font-family: var(--font-code); font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.rank { display: inline-block; font-weight: 900; font-size: 22px; color: var(--accent); }
+.stats { display: flex; gap: 20px; flex-wrap: wrap; font-size: 14px; }
+.stats b { font-family: var(--font-code); font-size: 18px; display: block; font-variant-numeric: tabular-nums; }
+.missed { display: grid; gap: 6px; font-size: 14px; }
+.missed li { margin-left: 1.2em; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row button { flex: 1 1 140px; }
+
+[hidden] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .progress > div { transition: none; } }
+</style>
+</head>
+<body>
+<main class="wrap" id="app"></main>
+
+<script>
+const Q = [
+  // ===== Day 1: 基礎 =====
+  { day: 1, ch: "3.1 変数と可変性", type: "compile", compiles: false,
+    code: `fn main() {
+    let x = 5;
+    x = 6;
+    println!("{x}");
+}`,
+    out: "error[E0384]: cannot assign twice to immutable variable `x`",
+    why: "Rustの変数はデフォルトで不変（immutable）。あとから値を変えたいなら、宣言のときに mut をつける。",
+    fix: `let mut x = 5;
+x = 6;` },
+  { day: 1, ch: "3.1 シャドーイング", type: "output",
+    code: `fn main() {
+    let x = 5;
+    let x = x + 1;
+    {
+        let x = x * 2;
+        println!("{x}");
+    }
+    println!("{x}");
+}`,
+    choices: ["12 → 6", "12 → 12", "6 → 6", "コンパイルエラー"], answer: 0,
+    out: "12\n6",
+    why: "let で同じ名前を宣言し直すのがシャドーイング。内側のブロックの x（12）はブロックを抜けると消えて、外側の x（6）に戻る。mut と違って、値を書き換えているわけではない。" },
+  { day: 1, ch: "3.1 mut とシャドーイングの違い", type: "compile", compiles: false,
+    code: `fn main() {
+    let mut spaces = "   ";
+    spaces = spaces.len();
+}`,
+    out: "error[E0308]: mismatched types\n  expected `&str`, found `usize`",
+    why: "mut は値を変えられるけど、型は変えられない。型ごと変えたいならシャドーイングを使う。",
+    fix: `let spaces = "   ";
+let spaces = spaces.len();` },
+  { day: 1, ch: "3.5 制御フロー（if は式）", type: "compile", compiles: false,
+    code: `fn main() {
+    let condition = true;
+    let number = if condition { 5 } else { "six" };
+}`,
+    out: "error[E0308]: `if` and `else` have incompatible types",
+    why: "Rustの if は式なので値を返せる。ただし変数の型はコンパイル時に1つに決まる必要があるので、すべての分岐が同じ型を返さないといけない。" },
+  { day: 1, ch: "3.5 loop から値を返す", type: "output",
+    code: `fn main() {
+    let mut counter = 0;
+    let result = loop {
+        counter += 1;
+        if counter == 10 {
+            break counter * 2;
+        }
+    };
+    println!("{result}");
+}`,
+    choices: ["10", "20", "0", "無限ループ"], answer: 1,
+    out: "20",
+    why: "break に値を渡すと、それが loop 式全体の値になる。counter が 10 になったとき 10 × 2 = 20 が result に入る。" },
+  { day: 1, ch: "3.3 関数（文と式）", type: "compile", compiles: false,
+    code: `fn plus_one(x: i32) -> i32 {
+    x + 1;
+}
+
+fn main() {
+    println!("{}", plus_one(5));
+}`,
+    out: "error[E0308]: mismatched types\n  expected `i32`, found `()`",
+    why: "x + 1 の末尾にセミコロンをつけると「文」になり、値を返さなくなる（() になる）。関数の最後の式を戻り値にするなら、セミコロンを外す。",
+    fix: `fn plus_one(x: i32) -> i32 {
+    x + 1
+}` },
+  { day: 1, ch: "3.2 データ型（タプル）", type: "output",
+    code: `fn main() {
+    let tup = (500, 6.4, 1);
+    let (x, y, z) = tup;
+    println!("{}", tup.1);
+}`,
+    choices: ["500", "6.4", "1", "コンパイルエラー"], answer: 1,
+    out: "6.4",
+    why: "タプルの要素は .0, .1, .2 と0始まりでアクセスする。分配しても中身はすべてCopy型なので、tup 自体はそのまま使える（x, y, z は未使用の警告が出るだけ）。" },
+
+  // ===== Day 2: 所有権と借用 =====
+  { day: 2, ch: "4.1 所有権（ムーブ）", type: "compile", compiles: false,
+    code: `fn main() {
+    let s1 = String::from("hello");
+    let s2 = s1;
+    println!("{s1}, world!");
+}`,
+    out: "error[E0382]: borrow of moved value: `s1`",
+    why: "String はヒープにデータを持つので、let s2 = s1; で所有権が s2 にムーブする。ムーブしたあとの s1 はもう使えない。中身ごと複製したいなら clone() を使う。",
+    fix: `let s2 = s1.clone();` },
+  { day: 2, ch: "4.1 所有権（Copy型）", type: "compile", compiles: true,
+    code: `fn main() {
+    let x = 5;
+    let y = x;
+    println!("x = {x}, y = {y}");
+}`,
+    out: "x = 5, y = 5",
+    why: "i32 のようにサイズが決まっていてスタックに置かれる型は Copy トレイトを持つ。代入するとムーブではなくコピーになるので、x も y も使える。" },
+  { day: 2, ch: "4.1 所有権と関数", type: "compile", compiles: false,
+    code: `fn takes(s: String) {
+    println!("{s}");
+}
+
+fn main() {
+    let s = String::from("rust");
+    takes(s);
+    println!("{s}");
+}`,
+    out: "error[E0382]: borrow of moved value: `s`",
+    why: "関数に値を渡すのも代入と同じでムーブ。takes(s) の時点で所有権は関数に移り、関数が終わると解放される。参照で受け取れば所有権を渡さずに済む。",
+    fix: `fn takes(s: &String) { ... }
+
+takes(&s);` },
+  { day: 2, ch: "4.2 参照と借用", type: "compile", compiles: true,
+    code: `fn len(s: &String) -> usize {
+    s.len()
+}
+
+fn main() {
+    let s = String::from("hello");
+    let n = len(&s);
+    println!("{s} は {n} 文字");
+}`,
+    out: "hello は 5 文字",
+    why: "&s は所有権を渡さずに値を参照する「借用」。len は借りるだけなので、呼んだあとも s を使える。" },
+  { day: 2, ch: "4.2 可変参照", type: "compile", compiles: false,
+    code: `fn change(s: &String) {
+    s.push_str(", world");
+}
+
+fn main() {
+    let s = String::from("hello");
+    change(&s);
+}`,
+    out: "error[E0596]: cannot borrow `*s` as mutable, as it is behind a `&` reference",
+    why: "普通の参照（&）は読み取り専用。中身を変更したいなら可変参照 &mut を使い、元の変数も mut にする。",
+    fix: `fn change(s: &mut String) {
+    s.push_str(", world");
+}
+
+let mut s = String::from("hello");
+change(&mut s);` },
+  { day: 2, ch: "4.2 可変参照は同時に1つ", type: "compile", compiles: false,
+    code: `fn main() {
+    let mut s = String::from("hello");
+    let r1 = &mut s;
+    let r2 = &mut s;
+    println!("{r1}, {r2}");
+}`,
+    out: "error[E0499]: cannot borrow `s` as mutable more than once at a time",
+    why: "可変参照は同時に1つだけ。これでデータ競合をコンパイル時に防いでいる。r1 を使い終わってから r2 を作れば通る。" },
+  { day: 2, ch: "4.2 参照の有効範囲", type: "compile", compiles: true,
+    code: `fn main() {
+    let mut s = String::from("hello");
+    let r1 = &s;
+    let r2 = &s;
+    println!("{r1} and {r2}");
+    let r3 = &mut s;
+    r3.push('!');
+    println!("{r3}");
+}`,
+    out: "hello and hello\nhello!",
+    why: "参照が有効なのは「最後に使われたところまで」。r1 と r2 は println! のあと二度と使われないので、そのあとに可変参照 r3 を作っても衝突しない。" },
+  { day: 2, ch: "4.2 ダングリング参照", type: "compile", compiles: false,
+    code: `fn dangle() -> &String {
+    let s = String::from("hello");
+    &s
+}
+
+fn main() {
+    let r = dangle();
+}`,
+    out: "error[E0106]: missing lifetime specifier",
+    why: "s は関数の終わりで解放されるので、その参照を返すと何もない場所を指す参照（ダングリング参照）になる。Rustはこれをコンパイル時に止める。String そのものを返せばいい。",
+    fix: `fn no_dangle() -> String {
+    let s = String::from("hello");
+    s
+}` },
+  { day: 2, ch: "8.1 ベクタと借用", type: "compile", compiles: false,
+    code: `fn main() {
+    let mut v = vec![1, 2, 3];
+    let first = &v[0];
+    v.push(4);
+    println!("{first}");
+}`,
+    out: "error[E0502]: cannot borrow `v` as mutable because it is also borrowed as immutable",
+    why: "push で容量が足りなくなると、ベクタの要素は別のメモリに引っ越すことがある。そうなると first は古い場所を指してしまうので、不変参照が生きている間の変更は禁止されている。" },
+  { day: 2, ch: "8.1 ベクタの範囲外アクセス", type: "output",
+    code: `fn main() {
+    let v = vec![1, 2, 3];
+    let x = v[10];
+    println!("{x}");
+}`,
+    choices: ["0", "3", "実行時に panic", "コンパイルエラー"], answer: 2,
+    out: "thread 'main' panicked at src/main.rs:3:13:\nindex out of bounds: the len is 3 but the index is 10",
+    why: "ベクタの長さは実行時に決まるので、範囲外アクセスはコンパイルでは止まらず、実行時に panic する。落としたくないなら v.get(10) で Option を受け取る。" },
+
+  // ===== Day 3: 構造体・enum・エラー処理 =====
+  { day: 3, ch: "5.1 構造体", type: "compile", compiles: false,
+    code: `struct User {
+    name: String,
+    age: u32,
+}
+
+fn main() {
+    let user = User {
+        name: String::from("ferris"),
+        age: 3,
+    };
+    user.age += 1;
+}`,
+    out: "error[E0594]: cannot assign to `user.age`, as `user` is not declared as mutable",
+    why: "一部のフィールドだけを mut にすることはできない。変更したいならインスタンス全体を let mut で宣言する。",
+    fix: `let mut user = User { ... };
+user.age += 1;` },
+  { day: 3, ch: "5.3 メソッド", type: "output",
+    code: `struct Rect {
+    w: u32,
+    h: u32,
+}
+
+impl Rect {
+    fn area(&self) -> u32 {
+        self.w * self.h
+    }
+}
+
+fn main() {
+    let r = Rect { w: 3, h: 4 };
+    println!("{}", r.area());
+}`,
+    choices: ["7", "12", "34", "コンパイルエラー"], answer: 1,
+    out: "12",
+    why: "impl ブロックに書いた関数がメソッド。&self で自分自身を借用し、r.area() のように呼べる。3 × 4 = 12。" },
+  { day: 3, ch: "6.2 match は網羅的", type: "compile", compiles: false,
+    code: `enum Coin {
+    Penny,
+    Nickel,
+    Dime,
+    Quarter,
+}
+
+fn value(c: Coin) -> u8 {
+    match c {
+        Coin::Penny => 1,
+        Coin::Nickel => 5,
+        Coin::Dime => 10,
+    }
+}
+
+fn main() {
+    println!("{}", value(Coin::Penny));
+}`,
+    out: "error[E0004]: non-exhaustive patterns: `Coin::Quarter` not covered",
+    why: "match はすべての可能性を網羅しないとコンパイルが通らない。Quarter の腕を足すか、_ => で残りをまとめて受ける。",
+    fix: `Coin::Quarter => 25,` },
+  { day: 3, ch: "6.1 Option", type: "compile", compiles: false,
+    code: `fn main() {
+    let x: i8 = 5;
+    let y: Option<i8> = Some(5);
+    let sum = x + y;
+}`,
+    out: "error[E0277]: cannot add `Option<i8>` to `i8`",
+    why: "Option<i8> と i8 は別の型。y は None かもしれないので、match や unwrap_or などで中身を取り出してから計算する。これが null の事故を型で防ぐ仕組み。",
+    fix: `let sum = x + y.unwrap_or(0);` },
+  { day: 3, ch: "6.3 if let", type: "output",
+    code: `fn main() {
+    let config: Option<u8> = None;
+    if let Some(max) = config {
+        println!("最大値は {max}");
+    } else {
+        println!("設定なし");
+    }
+}`,
+    choices: ["最大値は 0", "設定なし", "何も表示されない", "コンパイルエラー"], answer: 1,
+    out: "設定なし",
+    why: "if let は「このパターンに合うときだけ」処理する書き方。config は None なので Some(max) に合わず、else に進む。" },
+  { day: 3, ch: "6.2 match と _", type: "output",
+    code: `fn main() {
+    let dice = 9;
+    match dice {
+        3 => println!("帽子をもらう"),
+        7 => println!("帽子を失う"),
+        _ => println!("{dice}マス進む"),
+    }
+}`,
+    choices: ["帽子をもらう", "帽子を失う", "9マス進む", "コンパイルエラー"], answer: 2,
+    out: "9マス進む",
+    why: "_ は「それ以外すべて」に合うパターン。i32 は値が無数にあるので、_ がないと網羅できずコンパイルエラーになる。" },
+  { day: 3, ch: "9.2 ? 演算子", type: "compile", compiles: false,
+    code: `use std::fs::File;
+
+fn main() {
+    let f = File::open("hello.txt")?;
+}`,
+    out: "error[E0277]: the `?` operator can only be used in a function that returns `Result` or `Option`",
+    why: "? は「エラーなら呼び出し元に Err を返す」演算子。だから戻り値が Result（か Option）の関数の中でしか使えない。main の戻り値を Result にすれば使える。",
+    fix: `use std::error::Error;
+use std::fs::File;
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let f = File::open("hello.txt")?;
+    Ok(())
+}` },
+  { day: 3, ch: "9.2 エラーの伝播", type: "output",
+    code: `fn parse_double(s: &str) -> Result<i32, std::num::ParseIntError> {
+    let n: i32 = s.parse()?;
+    Ok(n * 2)
+}
+
+fn main() {
+    match parse_double("21") {
+        Ok(v) => println!("{v}"),
+        Err(e) => println!("エラー: {e}"),
+    }
+}`,
+    choices: ["42", "21", "エラー: invalid digit found in string", "コンパイルエラー"], answer: 0,
+    out: "42",
+    why: "\"21\" は数値に変換できるので、? は中身の 21 を取り出して先に進み、Ok(42) が返る。\"abc\" を渡すと ? の時点で Err がそのまま返り、main の Err の腕に入る。" },
+];
+
+const STAGES = [
+  { id: "1", day: 1, label: "DAY 1", title: "基礎", sub: "変数・型・関数・制御フロー（3章）" },
+  { id: "2", day: 2, label: "DAY 2", title: "所有権と借用", sub: "ムーブ・参照・ベクタ（4・8章）" },
+  { id: "3", day: 3, label: "DAY 3", title: "構造体・enum・エラー処理", sub: "struct・match・Option・Result（5・6・9章）" },
+  { id: "all", day: 0, label: "ALL", title: "総まとめ", sub: "全問シャッフル" },
+];
+const MAX_LIVES = 3;
+
+const app = document.getElementById("app");
+let S = null;
+
+function store(k, v) {
+  try {
+    if (v === undefined) return localStorage.getItem(k);
+    localStorage.setItem(k, v);
+  } catch (e) { return null; }
+}
+const bestOf = id => Number(store("rustquiz-best-" + id)) || 0;
+
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function hl(code) {
+  const re = /(\/\/.*$)|("(?:[^"\\]|\\.)*")|('(?:[^'\\]|\\.)')|\b(fn|let|mut|if|else|loop|while|for|in|match|struct|enum|impl|use|return|break|dyn|self|true|false)\b|\b([A-Z][A-Za-z0-9_]*)\b|\b(\d+(?:\.\d+)?)\b|\b([a-z_]+!)/gm;
+  let out = "", last = 0, m;
+  while ((m = re.exec(code))) {
+    out += esc(code.slice(last, m.index));
+    const t = esc(m[0]);
+    const cls = m[1] ? "cm" : (m[2] || m[3]) ? "st" : m[4] ? "kw" : m[5] ? "ty" : m[6] ? "nu" : "ma";
+    out += `<span class="${cls}">${t}</span>`;
+    last = re.lastIndex;
+  }
+  return out + esc(code.slice(last));
+}
+function shuffle(a) {
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function home() {
+  S = null;
+  app.innerHTML = `
+    <section class="hero">
+      <h1>コンパイル<span class="q">通る？</span></h1>
+      <p class="muted">The Book（The Rust Programming Language）の範囲から出題。コードを見て、コンパイラが通すか、何が表示されるかを当てよう。</p>
+    </section>
+    <section class="stages">
+      ${STAGES.map(st => {
+        const n = st.day ? Q.filter(q => q.day === st.day).length : Q.length;
+        const b = bestOf(st.id);
+        return `<button class="stage" data-stage="${st.id}">
+          <span class="day">${st.label}</span>
+          <span><span class="t">${st.title}</span><span class="small muted">${st.sub}・${n}問</span></span>
+          <span class="best">${b ? "BEST<br>" + b : "未挑戦"}</span>
+        </button>`;
+      }).join("")}
+    </section>
+    <section class="rules">
+      <h3 class="small">ルール</h3>
+      <p>正解で 100 点、連続正解ごとに +20 点のボーナス。</p>
+      <p>ライフは ${MAX_LIVES} つ。コンパイラに ${MAX_LIVES} 回怒られたらゲームオーバー。</p>
+      <p>答えたあとは実際のエラーメッセージと直し方が見られるよ。</p>
+    </section>`;
+  app.querySelectorAll("[data-stage]").forEach(b => b.addEventListener("click", () => start(b.dataset.stage)));
+}
+
+function start(id) {
+  const st = STAGES.find(s => s.id === id);
+  const qs = st.day ? Q.filter(q => q.day === st.day) : shuffle(Q);
+  S = { st, qs, i: 0, lives: MAX_LIVES, score: 0, streak: 0, maxStreak: 0, correct: 0, missed: [], answered: false };
+  render();
+  window.scrollTo(0, 0);
+}
+
+function hud() {
+  const hearts = Array.from({ length: MAX_LIVES }, (_, k) =>
+    k < S.lives ? "♥" : `<span class="gone">♥</span>`).join("");
+  return `
+    <div class="hud">
+      <div class="left">
+        <button class="back" id="quit">← ステージ選択</button>
+        <span class="lives" aria-label="ライフ ${S.lives}">${hearts}</span>
+      </div>
+      <span class="score">${S.score} pt${S.streak > 1 ? ` · ${S.streak}連続` : ""}</span>
+    </div>
+    <div class="progress"><div style="width:${(S.i / S.qs.length) * 100}%"></div></div>`;
+}
+
+function render() {
+  const q = S.qs[S.i];
+  const prompt = q.type === "compile" ? "このコード、コンパイル通る？" : "実行すると何が表示される？";
+  const buttons = q.type === "compile"
+    ? `<div class="answers"><button data-a="1">✓ 通る</button><button data-a="0">✗ エラーになる</button></div>`
+    : `<div class="answers choices">${q.choices.map((c, k) => `<button data-a="${k}">${esc(c)}</button>`).join("")}</div>`;
+  app.innerHTML = `
+    ${hud()}
+    <div class="chapter"><span class="tag">Q${S.i + 1}/${S.qs.length}</span><span>The Book ${q.ch}</span></div>
+    <p class="prompt">${prompt}</p>
+    <pre class="code"><code>${hl(q.code)}</code></pre>
+    ${buttons}
+    <div id="fb"></div>`;
+  document.getElementById("quit").addEventListener("click", home);
+  app.querySelectorAll("[data-a]").forEach(b => b.addEventListener("click", () => answer(Number(b.dataset.a))));
+  S.answered = false;
+}
+
+function answer(a) {
+  if (S.answered) return;
+  S.answered = true;
+  const q = S.qs[S.i];
+  const rightIdx = q.type === "compile" ? (q.compiles ? 1 : 0) : q.answer;
+  const ok = a === rightIdx;
+
+  if (ok) {
+    S.score += 100 + S.streak * 20;
+    S.streak += 1;
+    S.correct += 1;
+    S.maxStreak = Math.max(S.maxStreak, S.streak);
+  } else {
+    S.streak = 0;
+    S.lives -= 1;
+    S.missed.push(q.ch);
+  }
+
+  app.querySelectorAll("[data-a]").forEach(b => {
+    const k = Number(b.dataset.a);
+    b.disabled = true;
+    if (k === rightIdx) b.classList.add("right");
+    else if (k === a) b.classList.add("wrong");
+    else b.classList.add("dim");
+  });
+
+  const isErr = q.type === "compile" ? !q.compiles : q.out.startsWith("thread");
+  const termLabel = q.type === "compile" && !q.compiles ? "$ cargo build" : "$ cargo run";
+  const termBody = esc(q.out).replace(/^(error\[E\d+\]|thread 'main' panicked)/, '<span class="e">$1</span>');
+  const last = S.i === S.qs.length - 1 || S.lives === 0;
+
+  const fb = document.getElementById("fb");
+  fb.innerHTML = `
+    <div class="feedback">
+      <p class="verdict ${ok ? "ok" : "ng"}">${ok ? "正解！" : "ざんねん…"}</p>
+      <pre class="term ${isErr ? "" : "run"}"><span class="lab">${termLabel}</span>${termBody}</pre>
+      <p>${esc(q.why)}</p>
+      ${q.fix ? `<p class="fixlab">こう直すと通る</p><pre class="code"><code>${hl(q.fix)}</code></pre>` : ""}
+      <p class="ref">The Book ${q.ch}</p>
+      <button class="primary" id="next">${last ? "結果を見る" : "次の問題へ"}</button>
+    </div>`;
+  // HUDの点数とライフを更新
+  const hudBox = app.querySelector(".hud");
+  const tmp = document.createElement("div");
+  tmp.innerHTML = hud();
+  hudBox.replaceWith(tmp.firstElementChild);
+  document.getElementById("quit").addEventListener("click", home);
+
+  const next = document.getElementById("next");
+  next.addEventListener("click", () => {
+    if (last) return finish();
+    S.i += 1;
+    render();
+    window.scrollTo(0, 0);
+  });
+  fb.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+}
+
+function rankOf(ratio, over) {
+  if (over) return "コンパイラに怒られすぎた";
+  if (ratio === 1) return "所有権マスター";
+  if (ratio >= 0.7) return "借用じょうず";
+  if (ratio >= 0.4) return "ムーブ見習い";
+  return "コンパイラと仲良くなろう";
+}
+
+function finish() {
+  const total = S.qs.length;
+  const over = S.lives === 0 && S.i < total - 1;
+  const ratio = S.correct / total;
+  const prev = bestOf(S.st.id);
+  const isBest = S.score > prev;
+  if (isBest) store("rustquiz-best-" + S.st.id, String(S.score));
+  const missed = [...new Set(S.missed)];
+  app.innerHTML = `
+    <section class="result">
+      <p class="small muted">${S.st.label} ${S.st.title}${over ? " ・ ゲームオーバー" : " ・ クリア"}</p>
+      <div class="bigscore">${S.score}<span class="small muted"> pt</span></div>
+      <span class="rank">${rankOf(ratio, over)}</span>
+      ${isBest ? `<p class="small" style="color:var(--ok);font-weight:700">ベストスコア更新！</p>` : prev ? `<p class="small muted">ベスト ${prev} pt</p>` : ""}
+      <div class="stats">
+        <div><b>${S.correct}/${total}</b>正解</div>
+        <div><b>${S.maxStreak}</b>最大連続</div>
+        <div><b>${S.lives}</b>残りライフ</div>
+      </div>
+      ${missed.length ? `<div class="missed"><h3 class="small">読み返すとよさそうな節</h3><ul style="margin:0;padding:0">${missed.map(m => `<li>The Book ${esc(m)}</li>`).join("")}</ul></div>` : `<p>全問正解。The Book のこの範囲はばっちり。</p>`}
+      <div class="row">
+        <button class="primary" id="again">もう一度</button>
+        <button id="home">ステージ選択へ</button>
+      </div>
+    </section>`;
+  document.getElementById("again").addEventListener("click", () => start(S.st.id));
+  document.getElementById("home").addEventListener("click", home);
+  window.scrollTo(0, 0);
+}
+
+home();
+</script>
+</body>
+</html>
